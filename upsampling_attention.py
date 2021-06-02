@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+
 import logging
 import numpy as np
 import tensorflow as tf
@@ -24,6 +25,13 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         self.M = input_dim
         self.P = P
 
+    def _build(self):
+        fake_V = tf.random.uniform(shape=[1, 100, 512], dtype=tf.float32)
+        fake_duration_outputs = tf.random.uniform(shape=[1, 100], dtype=tf.float32)
+        fake_phone_mask = tf.random.uniform(shape=[1, 100], dtype=tf.float32)
+        self(fake_V, fake_duration_outputs, fake_phone_mask)
+
+
     def call(self, V, duration_outputs, phone_mask, training=True):
         """ 上采样注意力过程(Upsampling and Auxiliary Attention)
 
@@ -37,8 +45,8 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         round_durations = tf.math.maximum(tf.cast(tf.math.round(durations), tf.int32), tf.ones_like(durations, dtype=tf.int32))
 
         mel_length = tf.cast(tf.reduce_sum(round_durations, axis=-1), tf.int32)
-        max_mel_length = tf.cast(tf.math.maximum(mel_length), tf.int32)
-        mel_mask = tf.sequence_mask(mel_len, max_mel_length)
+        max_mel_length = tf.cast(tf.math.reduce_max(mel_length), tf.int32)
+        mel_mask = tf.sequence_mask(mel_length, max_mel_length, dtype=tf.int32)
 
         #  phone_mask: [N, K]
         #  mel_mask: [N, T]
@@ -53,7 +61,7 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         E = S + durations
 
         #  [N, T]
-        T = tf.tile(tf.meshgrid(tf.range(1, max_mel_length+1)), [N, 1])
+        T = tf.cast(tf.tile(tf.meshgrid(tf.range(1, max_mel_length+1)), [N, 1]), tf.float32)
 
         #  [N, T, K]
         S = tf.tile(tf.expand_dims(T, -1), [1, 1, K]) - tf.transpose(tf.tile(tf.expand_dims(S, -1), [1, 1, max_mel_length]), [0, 2, 1])
