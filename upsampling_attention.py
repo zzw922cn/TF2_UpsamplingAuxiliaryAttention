@@ -14,12 +14,12 @@ class UpsamplingAttention(tf.keras.layers.Layer):
 
         super().__init__()
         self.conv1d = ConvBatchNorm(8, 3, dropout, name_idx="upsampling_attention")
-        self.dense_layer1 = tf.keras.layers.Dense(16, "swish")
-        self.dense_layer2 = tf.keras.layers.Dense(16, "swish")
+        self.dense_layer1 = tf.keras.layers.Dense(16, "relu")
+        self.dense_layer2 = tf.keras.layers.Dense(16, "relu")
         self.dense_layer3 = tf.keras.layers.Dense(1)
 
-        self.aux_dense_layer1 = tf.keras.layers.Dense(P, "swish")
-        self.aux_dense_layer2 = tf.keras.layers.Dense(P, "swish")
+        self.aux_dense_layer1 = tf.keras.layers.Dense(P, "relu")
+        self.aux_dense_layer2 = tf.keras.layers.Dense(P, "relu")
 
         self.proj_layer = tf.keras.layers.Dense(input_dim, use_bias=False)
         self.M = input_dim
@@ -41,8 +41,8 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         N = tf.shape(V)[0]
         K = tf.shape(V)[1]
 
-        durations = tf.nn.relu(tf.math.exp(duration_outputs) - 1.0)
-        round_durations = tf.math.maximum(tf.cast(tf.math.round(durations), tf.int32), tf.ones_like(durations, dtype=tf.int32))
+        durations = duration_outputs
+        round_durations = tf.cast(phone_mask, tf.int32)*tf.math.maximum(tf.cast(tf.math.round(durations), tf.int32), tf.ones_like(durations, dtype=tf.int32))
 
         mel_length = tf.cast(tf.reduce_sum(round_durations, axis=-1), tf.int32)
         max_mel_length = tf.cast(tf.math.reduce_max(mel_length), tf.int32)
@@ -84,12 +84,13 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         C = self.aux_dense_layer2(self.aux_dense_layer1(W_input))
 
         #  [N, T, M]
-        proj_C = self.proj_layer(tf.squeeze(tf.reduce_sum(tf.tile(tf.expand_dims(W, -1), [1, 1, 1, self.P])*C, axis=2)))
+        proj_C = self.proj_layer(tf.reshape(tf.squeeze(tf.reduce_sum(tf.tile(tf.expand_dims(W, -1), [1, 1, 1, self.P])*C, axis=2)), [N, -1, self.P]))
 
         # [N, T, M]
         O = tf.linalg.matmul(W, V) + proj_C
+        O = tf.reshape(O, [N, -1, self.M])
 
-        return O, mel_mask
+        return O, round_durations, mel_mask
 
 
 class ConvBatchNorm(tf.keras.layers.Layer):
@@ -118,7 +119,7 @@ class ConvBatchNorm(tf.keras.layers.Layer):
 
         outputs = self.conv1d(inputs)
         outputs = self.batch_norm(outputs, training=training)
-        outputs = tf.keras.activations.swish(outputs)
+        outputs = tf.nn.relu(outputs)
         outputs = self.dropout(outputs, training=training)
 
         return outputs
