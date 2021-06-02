@@ -24,17 +24,27 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         self.M = input_dim
         self.P = P
 
-    def call(self, V, duration_outputs, max_mel_length, training=True):
+    def call(self, V, duration_outputs, phone_mask, training=True):
         """ 上采样注意力过程(Upsampling and Auxiliary Attention)
 
         V: convolutional output of duration predictor
         duration_outputs: predicted value of duration predictor
-        max_mel_length: the maximum length of a batch
         """
         N = tf.shape(V)[0]
         K = tf.shape(V)[1]
 
         durations = tf.nn.relu(tf.math.exp(duration_outputs) - 1.0)
+        round_durations = tf.math.maximum(tf.cast(tf.math.round(durations), tf.int32), tf.ones_like(durations, dtype=tf.int32))
+
+        mel_length = tf.cast(tf.reduce_sum(round_durations, axis=-1), tf.int32)
+        max_mel_length = tf.cast(tf.math.maximum(mel_length), tf.int32)
+        mel_mask = tf.sequence_mask(mel_len, max_mel_length)
+
+        #  phone_mask: [N, K]
+        #  mel_mask: [N, T]
+        #  attention_mask: [N, T, K]
+        attention_mask = tf.matmul(tf.expand_dims(tf.cast(mel_mask, tf.float32), -1), tf.expand_dims(tf.cast(phone_mask, tf.float32), 1))
+        bool_attention_mask = tf.cast(attention_mask, tf.bool)
 
         #  [N, K]
         S = tf.cumsum(durations, exclusive=True, axis=1)
@@ -47,9 +57,11 @@ class UpsamplingAttention(tf.keras.layers.Layer):
 
         #  [N, T, K]
         S = tf.tile(tf.expand_dims(T, -1), [1, 1, K]) - tf.transpose(tf.tile(tf.expand_dims(S, -1), [1, 1, max_mel_length]), [0, 2, 1])
+        S = S*attention_mask
 
         #  [N, T, K]
         E = tf.transpose(tf.tile(tf.expand_dims(E, -1), [1, 1, max_mel_length]), [0, 2, 1]) - tf.tile(tf.expand_dims(T, -1), [1, 1, K])
+        E = E*attention_mask
 
         #  [N, K, 8]
         conv_V = self.conv1d(V, training=training)
@@ -58,7 +70,7 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         W_input = tf.concat([tf.expand_dims(S, -1), tf.expand_dims(E, -1), tf.tile(tf.expand_dims(conv_V, 1), [1, max_mel_length, 1, 1])], axis=-1)
 
         #  [N, T, K]
-        W = tf.nn.softmax(tf.squeeze(self.dense_layer3(self.dense_layer2(self.dense_layer1(W_input)))), axis=-1)
+        W = tf.nn.softmax(-1000000*attention_mask*tf.squeeze(self.dense_layer3(self.dense_layer2(self.dense_layer1(W_input)))), axis=-1)
 
         #  [N, T, K, P]
         C = self.aux_dense_layer2(self.aux_dense_layer1(W_input))
@@ -69,7 +81,7 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         # [N, T, M]
         O = tf.linalg.matmul(W, V) + proj_C
 
-        return O
+        return O, mel_mask
 
 
 class ConvBatchNorm(tf.keras.layers.Layer):
