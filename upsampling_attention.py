@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 
+
 import logging
 import numpy as np
 import tensorflow as tf
@@ -78,7 +79,8 @@ class UpsamplingAttention(tf.keras.layers.Layer):
         W_input = tf.concat([tf.expand_dims(S, -1), tf.expand_dims(E, -1), tf.tile(tf.expand_dims(conv_V, 1), [1, max_mel_length, 1, 1])], axis=-1)
 
         #  [N, T, K]
-        W = tf.nn.softmax(-1000000*attention_mask*tf.squeeze(self.dense_layer3(self.dense_layer2(self.dense_layer1(W_input)))), axis=-1)
+        softmax_mask = (1.0 - attention_mask) * -1e9
+        W = tf.nn.softmax(softmax_mask + tf.squeeze(self.dense_layer3(self.dense_layer2(self.dense_layer1(W_input)))), axis=-1)
 
         #  [N, T, K, P]
         C = self.aux_dense_layer2(self.aux_dense_layer1(W_input))
